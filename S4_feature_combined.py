@@ -8,8 +8,8 @@ from utils import *
 
 root = args.root
 
-oof = pd.read_csv('./output/LGB_with_series_feature/oof.csv')
-sub = pd.read_csv('./output/LGB_with_series_feature/submission.csv.zip')
+oof = pd.read_csv('./output/LGB_with_series_feature/oof.csv')  # 训练好的模型对于oof样本进行的预测结果
+sub = pd.read_csv('./output/LGB_with_series_feature/submission.csv.zip')  # 训练好的模型对于测试集样本预测结果的平均
 
 def pad_target(x):
     t = np.zeros(13)
@@ -18,11 +18,36 @@ def pad_target(x):
     return list(t)
 
 tmp1 = oof.groupby('customer_ID',sort=False)['target'].agg(lambda x:pad_target(x))
+# 例如
+# oof = pd.DataFrame({
+#      "customer_ID": [A,A,A,A,A,B,B,B,B],
+#      "target": [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+# })
+# customer_ID
+# A    [nan, 0.1, 0.2, 0.3, 0.4, 0.5]  # 以长度为6演示，其中概率值是我随机填充的
+# B    [nan, nan, 0.6, 0.7, 0.8, 0.9]
+# Name: target, dtype: object
+
 tmp2 = sub.groupby('customer_ID',sort=False)['prediction'].agg(lambda x:pad_target(x))
+# customer_ID
+# C    [nan, 0.9, 0.8, 0.7, 0.6, 0.5]
+# D    [nan, nan, 0.4, 0.3, 0.2, 0.1]
+# Name: prediction, dtype: object
 
 tmp = tmp1.append(tmp2)
+# customer_ID
+# A    [nan, 0.1, 0.2, 0.3, 0.4, 0.5]
+# B    [nan, nan, 0.6, 0.7, 0.8, 0.9]
+# C    [nan, 0.9, 0.8, 0.7, 0.6, 0.5]
+# D    [nan, nan, 0.4, 0.3, 0.2, 0.1]
+# dtype: object
 
 tmp = pd.DataFrame(data=tmp.tolist(),columns=['target%s'%i for i in range(1,14)])
+#    target1  target2  target3  target4  target5  target6   # 以长度为6演示
+# 0      NaN      0.1      0.2      0.3      0.4      0.5
+# 1      NaN      NaN      0.6      0.7      0.8      0.9
+# 2      NaN      0.9      0.8      0.7      0.6      0.5
+# 3      NaN      NaN      0.4      0.3      0.2      0.1
 
 
 df = []
@@ -32,12 +57,26 @@ for fn in ['cat','num','diff','rank_num','last3_cat','last3_num','last3_diff', '
     else:
         df.append(pd.read_feather(f'{root}/{fn}_feature.feather').drop([id_name],axis=1))
     if 'last' in fn :
-        df[-1] = df[-1].add_prefix('_'.join(fn.split('_')[:-1])+'_')
+        df[-1] = df[-1].add_prefix('_'.join(fn.split('_')[:-1])+'_')  # 给前缀有last的几个宽表里面的特征，加上前缀
 
 df.append(tmp)
 
 df = pd.concat(df,axis=1)
 print(df.shape)
+# 假设df中除tmp以外的元素长下面这样
+#     f1   f2
+# 0    1    3
+# 1    2    4
+# 2    8    2
+# 3    4    0
+
+#     f1   f2  target1  target2  target3  target4  target5  target6
+# 0  1.0  3.0      NaN      0.1      0.2      0.3      0.4      0.5
+# 1  2.0  4.0      NaN      NaN      0.6      0.7      0.8      0.9
+# 2  8.0  2.0      NaN      0.9      0.8      0.7      0.6      0.5
+# 3  4.0  0.0      NaN      NaN      0.4      0.3      0.2      0.1
+# 前两行是训练集样本，后两行是测试集样本
+# 前两列是该用户统计得到的特征，后几列是lgb模型对于每个用户在第n个月违约的预测概率
 df.to_feather(f'{root}/all_feature.feather')
 
 del df
@@ -55,11 +94,12 @@ cat_features = ["B_30","B_38","D_114","D_116","D_117","D_120","D_126","D_63","D_
 
 df = pd.read_feather(f'./input/train.feather').append(pd.read_feather(f'./input/test.feather')).reset_index(drop=True)
 df = df.drop(['S_2'],axis=1)
-df = one_hot_encoding(df,cat_features,True)
+df = one_hot_encoding(df,cat_features,True)  # 将train和test拼接，然后将类别型特征one-hot编码，随后丢弃掉这些类别特征
+                                             # 此时，df中只剩原始的数值型特征和one-hot展开的类别型特征
 for col in tqdm(df.columns):
     if col not in ['customer_ID','S_2']:
         df[col] /= 100
-    df[col] = df[col].fillna(0)
+    df[col] = df[col].fillna(0)              # 将df中的特征值统一除以100，然后用0填充缺失值
 
 df.to_feather('./input/nn_series.feather')
 
@@ -161,11 +201,15 @@ for df in dfs:
             # v_min = df[col].min()
             # v_max = df[col].max()
             # df[col] = (df[col]-v_min+eps) / (v_max-v_min+eps)
-            vc = df[col].value_counts().sort_index()
-            bins = GreedyFindBin(vc.index.values,vc.values,len(vc),255,vc.sum())
-            df[col] = np.digitize(df[col],[-np.inf]+bins)
-            df.loc[df[col]==len(bins)+1,col] = 0
-            df[col] = df[col] / df[col].max()
+
+            vc = df[col].value_counts().sort_index()  # 按df[col]的值排序
+            if len(vc) != 0:
+                bins = GreedyFindBin(vc.index.values,vc.values,len(vc),255,vc.sum())
+                df[col] = np.digitize(df[col],[-np.inf]+bins)  # 将col特征分到对应的箱里
+                df.loc[df[col]==len(bins)+1,col] = 0  # 调整边界情况
+                df[col] = df[col] / df[col].max()  # 将所属分箱值除以分箱总数
+            else:
+                df[col] = 0
 
 tmp = tmp.fillna(0)
 dfs.append(tmp)

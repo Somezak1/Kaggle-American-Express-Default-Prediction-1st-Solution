@@ -91,6 +91,7 @@ def Write_log(logFile,text,isPrint=True):
 
 
 def Lgb_train_and_predict(train, test, config, gkf=False, aug=None, output_root='./output/', run_id=None):
+    # gkf=True,aug=None,run_id='LGB_with_series_feature'
     if not run_id:
         run_id = 'run_lgb_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         while os.path.exists(output_root+run_id+'/'):
@@ -98,7 +99,7 @@ def Lgb_train_and_predict(train, test, config, gkf=False, aug=None, output_root=
             run_id = 'run_lgb_' + datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         output_path = output_root + f'{args.save_dir}/'
     else:
-        output_path = output_root + run_id + '/'
+        output_path = output_root + run_id + '/'   # './output/LGB_with_series_feature/'
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     os.system(f'cp ./*.py {output_path}')
@@ -106,7 +107,7 @@ def Lgb_train_and_predict(train, test, config, gkf=False, aug=None, output_root=
     config['lgb_params']['seed'] = config['seed']
     oof, sub = None,None
     if train is not None:
-        log = open(output_path + '/train.log','w',buffering=1)
+        log = open(output_path + '/train.log','w',buffering=1)  # './output/LGB_with_series_feature/train.log'
         log.write(str(config)+'\n')
         features = config['feature_name']
         params = config['lgb_params']
@@ -212,13 +213,13 @@ class TaskDataset:
 
     def __getitem__(self, index):
         i1,i2,idx = self.uidxs[index]
-        series = self.df_series.iloc[i1:i2+1,1:].values
+        series = self.df_series.iloc[i1:i2+1,1:].values  # (<=13, 223)
 
         if len(series.shape) == 1:
             series = series.reshape((-1,)+series.shape[-1:])
         series_ = series.copy()
         series_[series_!=0] = 1.0 - series_[series_!=0] + 0.001
-        feature = self.df_feature.loc[idx].values[1:]
+        feature = self.df_feature.loc[idx].values[1:]  # (1, 6375+13)
         feature_ = feature.copy()
         feature_[feature_!=0] = 1.0 - feature_[feature_!=0] + 0.001
         if self.df_y is not None:
@@ -240,9 +241,9 @@ class TaskDataset:
         """
 
         batch_size = len(batch)
-        batch_series = torch.zeros((batch_size, 13, batch[0]['SERIES'].shape[1]))
+        batch_series = torch.zeros((batch_size, 13, batch[0]['SERIES'].shape[1])) # (b, 13, 223)
         batch_mask = torch.zeros((batch_size, 13))
-        batch_feature = torch.zeros((batch_size, batch[0]['FEATURE'].shape[0]))
+        batch_feature = torch.zeros((batch_size, batch[0]['FEATURE'].shape[0])) # (b, 6375+13)
         batch_y = torch.zeros((batch_size, 1))
 
         for i, item in enumerate(batch):
